@@ -2,7 +2,8 @@ export async function onRequestGet() {
   return new Response(
     JSON.stringify({
       success: true,
-      message: "WOODCRAFT Razorpay webhook receiver is online."
+      message: "WOODCRAFT Razorpay webhook receiver is online.",
+      appsScript: "configured"
     }),
     {
       status: 200,
