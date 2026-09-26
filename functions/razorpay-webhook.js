@@ -13,7 +13,6 @@ export async function onRequestGet() {
   );
 }
 
-
 export async function onRequestPost({ request }) {
   try {
     const body = await request.text();
