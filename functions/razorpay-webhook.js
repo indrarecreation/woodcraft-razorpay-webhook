@@ -20,7 +20,7 @@ export async function onRequestPost({ request, env }) {
     // This must remain unchanged for signature verification.
     const rawBody = await request.text();
 
-    // Get Razorpay's signature from the HTTP header.
+    // Get Razorpay's signature.
     const razorpaySignature =
       request.headers.get("X-Razorpay-Signature");
 
@@ -34,7 +34,7 @@ export async function onRequestPost({ request, env }) {
       );
     }
 
-    // Get the secret stored in Cloudflare.
+    // Get Razorpay webhook secret from Cloudflare.
     const webhookSecret = env.RAZORPAY_WEBHOOK_SECRET;
 
     if (!webhookSecret) {
@@ -67,10 +67,14 @@ export async function onRequestPost({ request, env }) {
       encoder.encode(rawBody)
     );
 
-    const calculatedSignature = bufferToHex(signatureBuffer);
+    const calculatedSignature =
+      bufferToHex(signatureBuffer);
 
-    // Compare Razorpay signature with our calculated signature.
-    if (!safeEqual(calculatedSignature, razorpaySignature)) {
+    // Verify Razorpay signature.
+    if (!safeEqual(
+      calculatedSignature,
+      razorpaySignature
+    )) {
       return jsonResponse(
         {
           success: false,
@@ -80,15 +84,19 @@ export async function onRequestPost({ request, env }) {
       );
     }
 
-    // Signature is valid.
+    // Razorpay signature verified.
     const event = JSON.parse(rawBody);
 
-    console.log("Verified Razorpay webhook:", event.event);
+    console.log(
+      "Verified Razorpay webhook:",
+      event.event
+    );
 
-    // Forward only verified data to Apps Script.
+    // Apps Script backend.
     const appsScriptUrl =
       "https://script.google.com/macros/s/AKfycbwAx9mO8Zp3laWdzDN_MD3b7azHuKWXPX5_KsXrofFxq2nbWoNb-3qB28CZimpnCIsGuA/exec";
 
+    // Secret used between Cloudflare and Apps Script.
     const forwardSecret =
       env.RAZORPAY_WEBHOOK_FORWARD_SECRET;
 
@@ -96,7 +104,8 @@ export async function onRequestPost({ request, env }) {
       return jsonResponse(
         {
           success: false,
-          error: "Apps Script forwarding secret is not configured."
+          error:
+            "Apps Script forwarding secret is not configured."
         },
         500
       );
@@ -108,40 +117,94 @@ export async function onRequestPost({ request, env }) {
       event: event
     };
 
-    const appsScriptResponse = await fetch(appsScriptUrl, {
-      method: "POST",
-      headers: {
-        "Content-Type": "text/plain;charset=utf-8"
-      },
-      body: JSON.stringify(forwardPayload)
-    });
+    // Forward verified webhook to Apps Script.
+    const appsScriptResponse = await fetch(
+      appsScriptUrl,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "text/plain;charset=utf-8"
+        },
+        body: JSON.stringify(forwardPayload)
+      }
+    );
 
-    const appsScriptText = await appsScriptResponse.text();
+    const appsScriptText =
+      await appsScriptResponse.text();
 
     console.log(
       "Apps Script response:",
       appsScriptText
     );
 
+    // First check HTTP response.
     if (!appsScriptResponse.ok) {
       return jsonResponse(
         {
           success: false,
-          error: "Apps Script rejected the webhook.",
-          appsScriptStatus: appsScriptResponse.status
+          error:
+            "Apps Script rejected the webhook.",
+          appsScriptStatus:
+            appsScriptResponse.status
         },
         502
       );
     }
 
+    // Apps Script may return HTTP 200 with success:false.
+    // Parse the actual response to make sure processing succeeded.
+    let appsScriptResult;
+
+    try {
+      appsScriptResult =
+        JSON.parse(appsScriptText);
+    } catch (parseError) {
+      return jsonResponse(
+        {
+          success: false,
+          error:
+            "Invalid response received from Apps Script.",
+          appsScriptResponse:
+            appsScriptText
+        },
+        502
+      );
+    }
+
+    // IMPORTANT:
+    // Do not tell Razorpay the webhook succeeded
+    // unless Apps Script explicitly reports success:true.
+    if (
+      !appsScriptResult ||
+      appsScriptResult.success !== true
+    ) {
+      return jsonResponse(
+        {
+          success: false,
+          error:
+            "Apps Script reported webhook processing failure.",
+          appsScriptResult:
+            appsScriptResult
+        },
+        502
+      );
+    }
+
+    // Everything succeeded.
     return jsonResponse({
       success: true,
-      message: "Razorpay webhook verified and forwarded."
+      message:
+        "Razorpay webhook verified and successfully processed.",
+      appsScript:
+        appsScriptResult
     });
 
   } catch (error) {
 
-    console.error("Webhook error:", error);
+    console.error(
+      "Webhook error:",
+      error
+    );
 
     return jsonResponse(
       {
@@ -166,7 +229,10 @@ function bufferToHex(buffer) {
 
 
 function safeEqual(a, b) {
-  if (typeof a !== "string" || typeof b !== "string") {
+  if (
+    typeof a !== "string" ||
+    typeof b !== "string"
+  ) {
     return false;
   }
 
@@ -177,7 +243,9 @@ function safeEqual(a, b) {
   let result = 0;
 
   for (let i = 0; i < a.length; i++) {
-    result |= a.charCodeAt(i) ^ b.charCodeAt(i);
+    result |=
+      a.charCodeAt(i) ^
+      b.charCodeAt(i);
   }
 
   return result === 0;
